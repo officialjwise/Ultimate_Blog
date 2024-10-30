@@ -1,48 +1,67 @@
-// middlewares/errorHandler.js
-const config = require('../config/env');
-const ResponseHandler = require('../utils/responseHandlers');
-
 class ErrorHandler {
   static handle(err, req, res, next) {
     err.statusCode = err.statusCode || 500;
     err.status = err.status || 'error';
 
-    if (config.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'development') {
       ErrorHandler.sendErrorDev(err, res);
     } else {
-      ErrorHandler.sendErrorProd(err, res);
+      let error = { ...err };
+      error.message = err.message;
+
+      // Handling different types of database errors
+      if (error.code === '23505') error = ErrorHandler.handleDuplicateFieldsDB(error);
+      if (error.code === '22P02') error = ErrorHandler.handleInvalidDataType(error);
+      if (error.code === '23503') error = ErrorHandler.handleForeignKeyViolation(error);
+
+      ErrorHandler.sendErrorProd(error, res);
     }
   }
 
   static sendErrorDev(err, res) {
-    return ResponseHandler.error(
-      res,
-      err.message,
-      err.statusCode,
-      {
-        status: err.status,
-        error: err,
-        stack: err.stack
-      }
-    );
+    res.status(err.statusCode).json({
+      status: err.status,
+      error: err,
+      message: err.message,
+      stack: err.stack
+    });
   }
 
   static sendErrorProd(err, res) {
     // Operational, trusted error: send message to client
     if (err.isOperational) {
-      return ResponseHandler.error(
-        res,
-        err.message,
-        err.statusCode
-      );
-    }
+      res.status(err.statusCode).json({
+        status: err.status,
+        message: err.message
+      });
+    } 
     // Programming or other unknown error: don't leak error details
-    console.error('ERROR 💥', err);
-    return ResponseHandler.error(
-      res,
-      'Something went wrong',
-      500
-    );
+    else {
+      // Log error for debugging
+      console.error('ERROR 💥', err);
+
+      res.status(500).json({
+        status: 'error',
+        message: 'Something went wrong'
+      });
+    }
+  }
+
+  // Database error handlers
+  static handleDuplicateFieldsDB(err) {
+    const field = err.detail.match(/\((.*?)\)/)[1];
+    const message = `Duplicate field value: ${field}. Please use another value!`;
+    return new ErrorHandler.AppError(message, 400);
+  }
+
+  static handleInvalidDataType(err) {
+    const message = 'Invalid input data type';
+    return new ErrorHandler.AppError(message, 400);
+  }
+
+  static handleForeignKeyViolation(err) {
+    const message = 'Referenced record does not exist';
+    return new ErrorHandler.AppError(message, 400);
   }
 
   // Custom error class
@@ -55,7 +74,7 @@ class ErrorHandler {
 
       Error.captureStackTrace(this, this.constructor);
     }
-  }
+  };
 }
 
 module.exports = ErrorHandler;

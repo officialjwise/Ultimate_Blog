@@ -1,7 +1,7 @@
 // controllers/userController.js
 const User = require('../models/User');
 const ResponseHandler = require('../utils/responseHandlers');
-const { ValidationError } = require('../utils/errors');
+const { ValidationError } = require('../middlewares/errorHandler');
 
 class UserController {
   /**
