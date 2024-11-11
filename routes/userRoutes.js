@@ -5,180 +5,66 @@ const UserController = require('../controllers/userController');
 const AuthMiddleware = require('../middlewares/authMiddleware');
 const ValidationMiddleware = require('../middlewares/validationMiddleware');
 const FileValidationMiddleware = require('../middlewares/fileValidationMiddleware');
-const RateLimitMiddleware = require('../middlewares/rateLimitingMiddleware');
+const { query } = require('express-validator');
 
-/**
- * Public Routes (No Authentication Required)
- */
-router.post(
-  '/register',
-  RateLimitMiddleware.getCustomLimiter({
-    windowMs: 60 * 60 * 1000, // 1 hour window
-    max: 5, // 5 registration attempts per hour
-    message: 'Too many registration attempts. Please try again later.'
-  }),
-  ValidationMiddleware.validate([
-    {
-      field: 'name',
-      rules: [
-        { type: 'required' },
-        { type: 'string' },
-        { type: 'min', value: 2 },
-        { type: 'max', value: 50 }
-      ]
-    },
-    {
-      field: 'email',
-      rules: [
-        { type: 'required' },
-        { type: 'email' }
-      ]
-    },
-    {
-      field: 'phone',
-      rules: [
-        { type: 'required' },
-        { type: 'matches', pattern: /^\+?[1-9]\d{1,14}$/ }
-      ]
-    },
-    {
-      field: 'password',
-      rules: [
-        { type: 'required' },
-        { type: 'min', value: 6 },
-        { type: 'matches', pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/ }
-      ]
-    }
-  ]),
-  UserController.createUser
-);
+// All routes require authentication
+router.use(AuthMiddleware.protect);
 
-/**
- * Protected Routes (Authentication Required)
- */
-
-// Profile management
-router.get(
-  '/profile',
-  AuthMiddleware.protect,
-  UserController.getUser
-);
+// Profile routes
+router.get('/profile', UserController.getProfile);
 
 router.put(
   '/profile',
-  AuthMiddleware.protect,
-  ValidationMiddleware.validate([
-    {
-      field: 'name',
-      rules: [
-        { type: 'string', optional: true },
-        { type: 'min', value: 2 },
-        { type: 'max', value: 50 }
-      ]
-    },
-    {
-      field: 'phone',
-      rules: [
-        { type: 'matches', pattern: /^\+?[1-9]\d{1,14}$/, optional: true }
-      ]
-    }
-  ]),
-  UserController.updateUser
+  ValidationMiddleware.validate(ValidationMiddleware.profileUpdateRules()),
+  UserController.updateProfile
 );
 
-// Document verification
+// Document routes
 router.post(
   '/documents',
-  AuthMiddleware.protect,
   FileValidationMiddleware.validateIdDocument,
-  ValidationMiddleware.validate([
-    {
-      field: 'type',
-      rules: [
-        { type: 'required' },
-        { type: 'in', values: ['Ghana Card', 'Voter ID', 'NHIS', 'Student ID'] }
-      ]
-    },
-    {
-      field: 'number',
-      rules: [
-        { type: 'required' },
-        { type: 'string' }
-      ]
-    },
-    {
-      field: 'expiryDate',
-      rules: [
-        { type: 'date' },
-        { type: 'after', value: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) }
-      ]
-    }
-  ]),
-  RateLimitMiddleware.getCustomLimiter({
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 3,
-    message: 'Too many document upload attempts. Please try again later.'
-  }),
+  ValidationMiddleware.validate(ValidationMiddleware.documentUploadRules()),
   UserController.uploadDocument
 );
 
-router.get(
-  '/documents/status',
-  AuthMiddleware.protect,
-  UserController.getDocumentStatus
-);
+router.get('/documents/status', UserController.getDocumentStatus);
 
-// Wallet management
-router.get(
-  '/wallet/balance',
-  AuthMiddleware.protect,
-  UserController.getWalletBalance
-);
+// Wallet routes
+router.get('/wallet/balance', UserController.getWalletBalance);
 
 router.post(
   '/wallet/deposit',
-  AuthMiddleware.protect,
-  ValidationMiddleware.validate([
-    {
-      field: 'amount',
-      rules: [
-        { type: 'required' },
-        { type: 'number' },
-        { type: 'min', value: 1 }
-      ]
-    },
-    {
-      field: 'transaction_reference',
-      rules: [
-        { type: 'required' },
-        { type: 'string' }
-      ]
-    }
-  ]),
-  RateLimitMiddleware.getCustomLimiter({
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 10,
-    message: 'Too many deposit attempts. Please try again later.'
-  }),
+  ValidationMiddleware.validate(ValidationMiddleware.walletDepositRules()),
   UserController.depositToWallet
 );
 
-/**
- * Admin Routes
- */
+// Transaction routes
 router.get(
-  '/all',
-  AuthMiddleware.protect,
-  AuthMiddleware.restrictTo('admin'),
-  UserController.getUsers
-);
-
-router.put(
-  '/:id/verify',
-  AuthMiddleware.protect,
-  AuthMiddleware.restrictTo('admin'),
-  ValidationMiddleware.validateId,
-  UserController.verifyUser
+  '/transactions',
+  ValidationMiddleware.validate([
+    query('page')
+      .optional()
+      .isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+    query('startDate')
+      .optional()
+      .isISO8601().withMessage('Start date must be a valid date'),
+    query('endDate')
+      .optional()
+      .isISO8601().withMessage('End date must be a valid date')
+      .custom((value, { req }) => {
+        if (req.query.startDate && new Date(value) < new Date(req.query.startDate)) {
+          throw new Error('End date must be after start date');
+        }
+        return true;
+      }),
+    query('type')
+      .optional()
+      .isIn(['DEPOSIT', 'WITHDRAWAL', 'VERIFICATION_FEE']).withMessage('Invalid transaction type')
+  ]),
+  UserController.getTransactions
 );
 
 module.exports = router;

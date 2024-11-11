@@ -1,361 +1,188 @@
 // middlewares/validationMiddleware.js
+const { body, param, query, validationResult } = require('express-validator');
 const ResponseHandler = require('../utils/responseHandlers');
 
 class ValidationMiddleware {
   /**
-   * Validate registration data
+   * Validate request
    */
-  static validateRegistration(req, res, next) {
-    const errors = {};
-    const { name, email, phone, password, password_confirmation } = req.body;
+  static validate(validations) {
+    return async (req, res, next) => {
+      for (let validation of validations) {
+        const result = await validation.run(req);
+        if (result.errors.length) break;
+      }
 
-    // Validate name
-    if (!name) {
-      errors.name = 'Name is required';
-    } else if (name.length < 2) {
-      errors.name = 'Name must be at least 2 characters long';
-    } else if (name.length > 50) {
-      errors.name = 'Name cannot exceed 50 characters';
-    }
+      const errors = validationResult(req);
+      if (errors.isEmpty()) {
+        return next();
+      }
 
-    // Validate email
-    if (!email) {
-      errors.email = 'Email is required';
-    } else if (!ValidationMiddleware.isValidEmail(email)) {
-      errors.email = 'Please provide a valid email address';
-    }
-
-    // Validate phone
-    if (!phone) {
-      errors.phone = 'Phone number is required';
-    } else if (!ValidationMiddleware.isValidPhone(phone)) {
-      errors.phone = 'Please provide a valid phone number';
-    }
-
-    // Validate password
-    const passwordErrors = ValidationMiddleware.validatePasswordStrength(password);
-    if (passwordErrors.length > 0) {
-      errors.password = passwordErrors;
-    }
-
-    // Validate password confirmation
-    if (password !== password_confirmation) {
-      errors.password_confirmation = 'Passwords do not match';
-    }
-
-    if (Object.keys(errors).length > 0) {
-      return ResponseHandler.badRequest(res, 'Validation failed', errors);
-    }
-
-    next();
-  }
-
-  /**
-   * Validation Presets
-   */
-  static get userValidationRules() {
-    return {
-      registration: [
-        {
-          field: 'name',
-          rules: [
-            { type: 'required' },
-            { type: 'string' },
-            { type: 'min', value: 2 },
-            { type: 'max', value: 50 }
-          ]
-        },
-        {
-          field: 'email',
-          rules: [
-            { type: 'required' },
-            { type: 'email' }
-          ]
-        },
-        {
-          field: 'phone',
-          rules: [
-            { type: 'required' },
-            { type: 'matches', pattern: /^\+?[1-9]\d{1,14}$/ }
-          ]
-        },
-        {
-          field: 'password',
-          rules: [
-            { type: 'required' },
-            { type: 'min', value: 6 },
-            { type: 'matches', pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/ }
-          ]
+      const extractedErrors = {};
+      errors.array().forEach(err => {
+        if (!extractedErrors[err.path]) {
+          extractedErrors[err.path] = [];
         }
-      ],
+        extractedErrors[err.path].push(err.msg);
+      });
 
-      profileUpdate: [
-        {
-          field: 'name',
-          rules: [
-            { type: 'string', optional: true },
-            { type: 'min', value: 2 },
-            { type: 'max', value: 50 }
-          ]
-        },
-        {
-          field: 'phone',
-          rules: [
-            { type: 'matches', pattern: /^\+?[1-9]\d{1,14}$/, optional: true }
-          ]
-        }
-      ],
-
-      documentUpload: [
-        {
-          field: 'type',
-          rules: [
-            { type: 'required' },
-            { type: 'in', values: ['Ghana Card', 'Voter ID', 'NHIS', 'Student ID'] }
-          ]
-        },
-        {
-          field: 'number',
-          rules: [
-            { type: 'required' },
-            { type: 'string' }
-          ]
-        },
-        {
-          field: 'expiryDate',
-          rules: [
-            { type: 'date' },
-            { type: 'after', value: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) }
-          ]
-        }
-      ],
-
-      walletDeposit: [
-        {
-          field: 'amount',
-          rules: [
-            { type: 'required' },
-            { type: 'number' },
-            { type: 'min', value: 1 }
-          ]
-        },
-        {
-          field: 'transaction_reference',
-          rules: [
-            { type: 'required' },
-            { type: 'string' }
-          ]
-        }
-      ]
+      return ResponseHandler.badRequest(res, 'Validation failed', extractedErrors);
     };
   }
 
-  // Convenience methods for routes
-  static validateRegistration() {
-    return this.validate(this.userValidationRules.registration);
-  }
-
-  static validateProfileUpdate() {
-    return this.validate(this.userValidationRules.profileUpdate);
-  }
-
-  static validateDocumentUpload() {
-    return this.validate(this.userValidationRules.documentUpload);
-  }
-
-  static validateWalletDeposit() {
-    return this.validate(this.userValidationRules.walletDeposit);
+  /**
+   * Registration validation rules
+   */
+  static registrationRules() {
+    return [
+      body('name')
+        .trim()
+        .notEmpty().withMessage('Name is required')
+        .isLength({ min: 2, max: 50 }).withMessage('Name must be between 2 and 50 characters'),
+      
+      body('email')
+        .trim()
+        .notEmpty().withMessage('Email is required')
+        .isEmail().withMessage('Must be a valid email address')
+        .normalizeEmail(),
+      
+      body('phone')
+        .trim()
+        .notEmpty().withMessage('Phone number is required')
+        .matches(/^\+?[1-9]\d{1,14}$/).withMessage('Must be a valid phone number'),
+      
+      body('password')
+        .notEmpty().withMessage('Password is required')
+        .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+        .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/).withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
+      
+      body('password_confirmation')
+        .notEmpty().withMessage('Password confirmation is required')
+        .custom((value, { req }) => {
+          if (value !== req.body.password) {
+            throw new Error('Passwords do not match');
+          }
+          return true;
+        })
+    ];
   }
 
   /**
-   * Validate login data
+   * Login validation rules
    */
-  static validateLogin(req, res, next) {
-    const errors = {};
-    const { email, password } = req.body;
-
-    // Validate email
-    if (!email) {
-      errors.email = 'Email is required';
-    } else if (!ValidationMiddleware.isValidEmail(email)) {
-      errors.email = 'Please provide a valid email address';
-    }
-
-    // Validate password
-    if (!password) {
-      errors.password = 'Password is required';
-    }
-
-    if (Object.keys(errors).length > 0) {
-      return ResponseHandler.badRequest(res, 'Validation failed', errors);
-    }
-
-    next();
+  static loginRules() {
+    return [
+      body('email')
+        .trim()
+        .notEmpty().withMessage('Email is required')
+        .isEmail().withMessage('Must be a valid email address')
+        .normalizeEmail(),
+      
+      body('password')
+        .notEmpty().withMessage('Password is required')
+    ];
   }
 
   /**
-   * Validate email verification data
+   * Profile update validation rules
    */
-  static validateEmailVerification(req, res, next) {
-    const errors = {};
-    const { email, code } = req.body;
-
-    // Validate email
-    if (!email) {
-      errors.email = 'Email is required';
-    } else if (!ValidationMiddleware.isValidEmail(email)) {
-      errors.email = 'Please provide a valid email address';
-    }
-
-    // Validate verification code
-    if (!code) {
-      errors.code = 'Verification code is required';
-    } else if (!ValidationMiddleware.isValidVerificationCode(code)) {
-      errors.code = 'Invalid verification code format';
-    }
-
-    if (Object.keys(errors).length > 0) {
-      return ResponseHandler.badRequest(res, 'Validation failed', errors);
-    }
-
-    next();
+  static profileUpdateRules() {
+    return [
+      body('name')
+        .optional()
+        .trim()
+        .isLength({ min: 2, max: 50 }).withMessage('Name must be between 2 and 50 characters'),
+      
+      body('phone')
+        .optional()
+        .trim()
+        .matches(/^\+?[1-9]\d{1,14}$/).withMessage('Must be a valid phone number')
+    ];
   }
 
   /**
-   * Validate email only
+   * Document upload validation rules
    */
-  static validateEmail(req, res, next) {
-    const errors = {};
-    const { email } = req.body;
-
-    if (!email) {
-      errors.email = 'Email is required';
-    } else if (!ValidationMiddleware.isValidEmail(email)) {
-      errors.email = 'Please provide a valid email address';
-    }
-
-    if (Object.keys(errors).length > 0) {
-      return ResponseHandler.badRequest(res, 'Validation failed', errors);
-    }
-
-    next();
+  static documentUploadRules() {
+    return [
+      body('type')
+        .trim()
+        .notEmpty().withMessage('Document type is required')
+        .isIn(['Ghana Card', 'Voter ID', 'NHIS', 'Student ID']).withMessage('Invalid document type'),
+      
+      body('number')
+        .trim()
+        .notEmpty().withMessage('Document number is required'),
+      
+      body('expiryDate')
+        .optional()
+        .isISO8601().withMessage('Must be a valid date')
+        .custom(value => {
+          if (new Date(value) < new Date()) {
+            throw new Error('Expiry date must be in the future');
+          }
+          return true;
+        })
+    ];
   }
 
   /**
-   * Validate password reset
+   * Wallet deposit validation rules
    */
-  static validatePasswordReset(req, res, next) {
-    const errors = {};
-    const { token, password, password_confirmation } = req.body;
-
-    // Validate token
-    if (!token) {
-      errors.token = 'Reset token is required';
-    }
-
-    // Validate password
-    const passwordErrors = ValidationMiddleware.validatePasswordStrength(password);
-    if (passwordErrors.length > 0) {
-      errors.password = passwordErrors;
-    }
-
-    // Validate password confirmation
-    if (password !== password_confirmation) {
-      errors.password_confirmation = 'Passwords do not match';
-    }
-
-    if (Object.keys(errors).length > 0) {
-      return ResponseHandler.badRequest(res, 'Validation failed', errors);
-    }
-
-    next();
+  static walletDepositRules() {
+    return [
+      body('amount')
+        .notEmpty().withMessage('Amount is required')
+        .isFloat({ min: 1 }).withMessage('Amount must be greater than 0'),
+      
+      body('transaction_reference')
+        .trim()
+        .notEmpty().withMessage('Transaction reference is required')
+    ];
   }
 
   /**
-   * Validate refresh token
+   * Document verification rules (admin)
    */
-  static validateRefreshToken(req, res, next) {
-    const errors = {};
-    const { refresh_token } = req.body;
-
-    if (!refresh_token) {
-      errors.refresh_token = 'Refresh token is required';
-    }
-
-    if (Object.keys(errors).length > 0) {
-      return ResponseHandler.badRequest(res, 'Validation failed', errors);
-    }
-
-    next();
+  static documentVerificationRules() {
+    return [
+      body('status')
+        .trim()
+        .notEmpty().withMessage('Status is required')
+        .isIn(['APPROVED', 'REJECTED', 'PENDING_REVIEW']).withMessage('Invalid status'),
+      
+      body('comments')
+        .optional()
+        .trim()
+        .isLength({ max: 500 }).withMessage('Comments cannot exceed 500 characters')
+    ];
   }
 
   /**
-   * Validate ID parameter
+   * ID parameter validation
    */
-  static validateId(req, res, next) {
-    const { id } = req.params;
-
-    if (!id || !ValidationMiddleware.isValidUUID(id)) {
-      return ResponseHandler.badRequest(res, 'Invalid ID format');
-    }
-
-    next();
+  static validateId() {
+    return [
+      param('id')
+        .notEmpty().withMessage('ID is required')
+        .matches(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+        .withMessage('Invalid ID format')
+    ];
   }
 
   /**
-   * Helper Methods
+   * Pagination and filtering validation
    */
-
-  // Email validation
-  static isValidEmail(email) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  }
-
-  // Phone validation (international format)
-  static isValidPhone(phone) {
-    return /^\+?[1-9]\d{1,14}$/.test(phone);
-  }
-
-  // Verification code validation (6 digits)
-  static isValidVerificationCode(code) {
-    return /^\d{6}$/.test(code);
-  }
-
-  // UUID validation
-  static isValidUUID(uuid) {
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
-  }
-
-  // Password strength validation
-  static validatePasswordStrength(password) {
-    const errors = [];
-
-    if (!password) {
-      errors.push('Password is required');
-      return errors;
-    }
-
-    if (password.length < 8) {
-      errors.push('Password must be at least 8 characters long');
-    }
-
-    if (!/[A-Z]/.test(password)) {
-      errors.push('Password must contain at least one uppercase letter');
-    }
-
-    if (!/[a-z]/.test(password)) {
-      errors.push('Password must contain at least one lowercase letter');
-    }
-
-    if (!/\d/.test(password)) {
-      errors.push('Password must contain at least one number');
-    }
-
-    if (!/[@$!%*?&]/.test(password)) {
-      errors.push('Password must contain at least one special character (@$!%*?&)');
-    }
-
-    return errors;
+  static paginationRules() {
+    return [
+      query('page')
+        .optional()
+        .isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+      
+      query('limit')
+        .optional()
+        .isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100')
+    ];
   }
 }
 

@@ -2,57 +2,90 @@
 const express = require('express');
 const router = express.Router();
 const AuthController = require('../controllers/authController');
-const AuthMiddleware = require('../middlewares/authMiddleware');
 const ValidationMiddleware = require('../middlewares/validationMiddleware');
+const RateLimitMiddleware = require('../middlewares/rateLimitingMiddleware');
+const { body } = require('express-validator');
 
-// POST /auth/register
-router.post('/register', 
-  ValidationMiddleware.validateRegistration,
-  (req, res) => AuthController.register(req, res)
+// Registration
+router.post(
+  '/register',
+  RateLimitMiddleware.registrationLimiter,
+  ValidationMiddleware.validate(ValidationMiddleware.registrationRules()),
+  AuthController.register
 );
 
-// POST /auth/login
-router.post('/login',
-  ValidationMiddleware.validateLogin,
-  (req, res) => AuthController.login(req, res)
+// Login
+router.post(
+  '/login',
+  RateLimitMiddleware.loginLimiter,
+  ValidationMiddleware.validate(ValidationMiddleware.loginRules()),
+  AuthController.login
 );
 
-// POST /auth/verify
-router.post('/verify',
-  ValidationMiddleware.validateEmailVerification,
-  (req, res) => AuthController.verifyEmail(req, res)
+// Email verification
+router.post(
+  '/verify-email',
+  RateLimitMiddleware.emailVerificationLimiter,
+  ValidationMiddleware.validate([
+    body('email')
+      .trim()
+      .notEmpty().withMessage('Email is required')
+      .isEmail().withMessage('Must be a valid email address'),
+    body('code')
+      .trim()
+      .notEmpty().withMessage('Verification code is required')
+      .isLength({ min: 6, max: 6 }).withMessage('Invalid verification code')
+  ]),
+  AuthController.verifyEmail
 );
 
-// POST /auth/verify/resend
-router.post('/verify/resend',
-  ValidationMiddleware.validateEmail,
-  (req, res) => AuthController.resendVerification(req, res)
+// Resend verification code
+router.post(
+  '/resend-verification',
+  RateLimitMiddleware.emailVerificationLimiter,
+  ValidationMiddleware.validate([
+    body('email')
+      .trim()
+      .notEmpty().withMessage('Email is required')
+      .isEmail().withMessage('Must be a valid email address')
+  ]),
+  AuthController.resendVerification
 );
 
-// POST /auth/password/forgot
-router.post('/password/forgot',
-  ValidationMiddleware.validateEmail,
-  (req, res) => AuthController.forgotPassword(req, res)
+// Forgot password
+router.post(
+  '/forgot-password',
+  RateLimitMiddleware.passwordResetLimiter,
+  ValidationMiddleware.validate([
+    body('email')
+      .trim()
+      .notEmpty().withMessage('Email is required')
+      .isEmail().withMessage('Must be a valid email address')
+  ]),
+  AuthController.forgotPassword
 );
 
-// POST /auth/password/reset
-router.post('/password/reset',
-  ValidationMiddleware.validatePasswordReset,
-  (req, res) => AuthController.resetPassword(req, res)
-);
-
-// Protected Routes
-router.use(AuthMiddleware.protect);
-
-// POST /auth/logout
-router.post('/logout', 
-  (req, res) => AuthController.logout(req, res)
-);
-
-// POST /auth/token/refresh
-router.post('/token/refresh',
-  ValidationMiddleware.validateRefreshToken,
-  (req, res) => AuthController.refreshToken(req, res)
+// Reset password
+router.post(
+  '/reset-password',
+  RateLimitMiddleware.passwordResetLimiter,
+  ValidationMiddleware.validate([
+    body('token')
+      .notEmpty().withMessage('Reset token is required'),
+    body('password')
+      .notEmpty().withMessage('Password is required')
+      .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+      .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/).withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
+    body('password_confirmation')
+      .notEmpty().withMessage('Password confirmation is required')
+      .custom((value, { req }) => {
+        if (value !== req.body.password) {
+          throw new Error('Passwords do not match');
+        }
+        return true;
+      })
+  ]),
+  AuthController.resetPassword
 );
 
 module.exports = router;

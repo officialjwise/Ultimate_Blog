@@ -1,207 +1,304 @@
+// controllers/adminController.js
 const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
+const config = require('../config/env');
 const ResponseHandler = require('../utils/responseHandlers');
-const { NotFoundError } = require('../utils/errors');
+const ErrorHandler = require('../middlewares/errorHandler');
+const DatabaseSeeder = require('../utils/seeder');
 
 class AdminController {
   /**
-   * Get all users
+   * Admin Login
+   * @route POST /api/admin/login
+   */
+  static async login(req, res, next) {
+    try {
+      const { email, password } = req.body;
+      const userModel = new User();
+
+      // Find admin user
+      const admin = await userModel.findByEmail(email);
+      if (!admin || admin.role !== 'admin') {
+        return next(new ErrorHandler.AppError('Invalid credentials', 401));
+      }
+
+      // Verify password
+      const isPasswordValid = await userModel.comparePassword(password, admin.password);
+      if (!isPasswordValid) {
+        return next(new ErrorHandler.AppError('Invalid credentials', 401));
+      }
+
+      // Generate admin token
+      const token = jwt.sign(
+        { 
+          id: admin.id,
+          role: admin.role,
+          isAdmin: true
+        },
+        config.JWT_SECRET,
+        { expiresIn: config.JWT_EXPIRE }
+      );
+
+      // Log admin login
+      await this.logAdminActivity(admin.id, 'LOGIN', req);
+
+      return ResponseHandler.success(res, {
+        admin: {
+          id: admin.id,
+          name: admin.name,
+          email: admin.email,
+          role: admin.role
+        },
+        token
+      });
+    } catch (error) {
+      next(new ErrorHandler.AppError(error.message, 500));
+    }
+  }
+
+  /**
+   * Get Dashboard Stats
+   * @route GET /api/admin/dashboard
+   */
+  static async getDashboardStats(req, res, next) {
+    try {
+      const { startDate, endDate } = req.query;
+      const userModel = new User();
+
+      // Get various statistics
+      const [
+        userStats,
+        verificationStats,
+        transactionStats
+      ] = await Promise.all([
+        userModel.getUserStats(startDate, endDate),
+        userModel.getVerificationStats(startDate, endDate),
+        userModel.getTransactionStats(startDate, endDate)
+      ]);
+
+      return ResponseHandler.success(res, {
+        timeRange: { startDate, endDate },
+        stats: {
+          users: userStats,
+          verifications: verificationStats,
+          transactions: transactionStats
+        }
+      });
+    } catch (error) {
+      next(new ErrorHandler.AppError(error.message, 500));
+    }
+  }
+
+  /**
+   * Get Users List
    * @route GET /api/admin/users
    */
-  static async getUsers(req, res) {
+  static async getUsers(req, res, next) {
     try {
       const userModel = new User();
       const {
         page = 1,
         limit = 10,
         search,
-        sort = 'created_at',
-        order = 'desc',
+        sortBy = 'created_at',
+        sortOrder = 'desc',
+        status,
         verified,
-        role
+        role,
+        startDate,
+        endDate
       } = req.query;
 
-      const filters = {};
-      if (verified !== undefined) filters.verified = verified === 'true';
-      if (role) filters.role = role;
+      const filters = {
+        ...(status && { status }),
+        ...(verified && { verified: verified === 'true' }),
+        ...(role && { role })
+      };
 
       const result = await userModel.findAll({
         page: parseInt(page),
         limit: parseInt(limit),
         search,
-        sort,
-        order,
-        filters
+        sort: {
+          field: sortBy,
+          order: sortOrder
+        },
+        filters,
+        dateRange: {
+          startDate,
+          endDate
+        }
       });
 
       return ResponseHandler.success(res, result);
     } catch (error) {
-      return ResponseHandler.error(res, error.message);
+      next(new ErrorHandler.AppError(error.message, 500));
     }
   }
 
   /**
-   * Get single user details
+   * Get Single User Details
    * @route GET /api/admin/users/:id
    */
-  static async getUser(req, res) {
+  static async getUser(req, res, next) {
     try {
       const userModel = new User();
       const user = await userModel.findById(req.params.id, true); // Include soft deleted
 
       if (!user) {
-        throw new NotFoundError('User not found');
+        return next(new ErrorHandler.AppError('User not found', 404));
       }
 
-      return ResponseHandler.success(res, { user });
+      // Get user's activity and documents
+      const [activity, documents] = await Promise.all([
+        userModel.getUserActivity(req.params.id),
+        userModel.getUserDocuments(req.params.id)
+      ]);
+
+      return ResponseHandler.success(res, {
+        user,
+        activity,
+        documents
+      });
     } catch (error) {
-      return ResponseHandler.error(res, error.message);
+      next(new ErrorHandler.AppError(error.message, 500));
     }
   }
 
   /**
-   * Verify user's document
-   * @route PUT /api/admin/users/:id/verify-document
+   * Get Verification Requests
+   * @route GET /api/admin/verification-requests
    */
-  static async verifyUserDocument(req, res) {
+  static async getVerificationRequests(req, res, next) {
+    try {
+      const userModel = new User();
+      const {
+        page = 1,
+        limit = 10,
+        status,
+        documentType,
+        sortBy = 'created_at',
+        sortOrder = 'desc',
+        startDate,
+        endDate
+      } = req.query;
+
+      const filters = {
+        ...(status && { status }),
+        ...(documentType && { document_type: documentType })
+      };
+
+      const requests = await userModel.getVerificationRequests({
+        page: parseInt(page),
+        limit: parseInt(limit),
+        filters,
+        sort: {
+          field: sortBy,
+          order: sortOrder
+        },
+        dateRange: {
+          startDate,
+          endDate
+        }
+      });
+
+      return ResponseHandler.success(res, requests);
+    } catch (error) {
+      next(new ErrorHandler.AppError(error.message, 500));
+    }
+  }
+
+  /**
+   * Verify User Document
+   * @route PUT /api/admin/documents/:id/verify
+   */
+  static async verifyDocument(req, res, next) {
     try {
       const { id } = req.params;
       const { status, comments } = req.body;
-
       const userModel = new User();
-      const user = await userModel.findById(id);
 
-      if (!user) {
-        throw new NotFoundError('User not found');
-      }
-
-      const updatedUser = await userModel.updateIdentificationStatus(id, {
+      const verificationRequest = await userModel.updateDocumentVerification(id, {
         status,
         admin_comments: comments,
         verified_by: req.user.id,
         verified_at: new Date().toISOString()
       });
 
-      return ResponseHandler.success(res, { 
-        user: updatedUser,
-        message: `Document ${status.toLowerCase()}`
-      });
-    } catch (error) {
-      return ResponseHandler.error(res, error.message);
-    }
-  }
-
-  /**
-   * Update user status (block/unblock)
-   * @route PUT /api/admin/users/:id/status
-   */
-  static async updateUserStatus(req, res) {
-    try {
-      const { id } = req.params;
-      const { status, reason } = req.body;
-
-      const userModel = new User();
-      const user = await userModel.findById(id);
-
-      if (!user) {
-        throw new NotFoundError('User not found');
-      }
-
-      const updatedUser = await userModel.updateStatus(id, {
-        status,
-        status_reason: reason,
-        status_updated_by: req.user.id,
-        status_updated_at: new Date().toISOString()
-      });
+      // Log admin activity
+      await this.logAdminActivity(
+        req.user.id,
+        'VERIFY_DOCUMENT',
+        req,
+        { documentId: id, status, comments }
+      );
 
       return ResponseHandler.success(res, {
-        user: updatedUser,
-        message: `User ${status.toLowerCase()} successfully`
+        verificationRequest,
+        message: `Document ${status.toLowerCase()} successfully`
       });
     } catch (error) {
-      return ResponseHandler.error(res, error.message);
+      next(new ErrorHandler.AppError(error.message, 500));
     }
   }
 
   /**
-   * Get document verification requests
-   * @route GET /api/admin/verification-requests
+   * Export Users Data
+   * @route GET /api/admin/export/users
    */
-  static async getVerificationRequests(req, res) {
+  static async exportUsers(req, res, next) {
     try {
-      const userModel = new User();
       const {
-        page = 1,
-        limit = 10,
-        status,
-        sort = 'created_at',
-        order = 'desc'
-      } = req.query;
-
-      const filters = {};
-      if (status) filters.status = status;
-
-      const requests = await userModel.getVerificationRequests({
-        page: parseInt(page),
-        limit: parseInt(limit),
-        sort,
-        order,
-        filters
-      });
-
-      return ResponseHandler.success(res, requests);
-    } catch (error) {
-      return ResponseHandler.error(res, error.message);
-    }
-  }
-
-  /**
-   * Get admin dashboard stats
-   * @route GET /api/admin/dashboard
-   */
-  static async getDashboardStats(req, res) {
-    try {
-      const userModel = new User();
-      
-      const stats = await userModel.getAdminStats();
-
-      return ResponseHandler.success(res, { stats });
-    } catch (error) {
-      return ResponseHandler.error(res, error.message);
-    }
-  }
-
-  /**
-   * Get user activity logs
-   * @route GET /api/admin/users/:id/activity
-   */
-  static async getUserActivity(req, res) {
-    try {
-      const { id } = req.params;
-      const {
-        page = 1,
-        limit = 10,
-        type,
-        from,
-        to
+        format = 'csv',
+        fields,
+        filters,
+        startDate,
+        endDate
       } = req.query;
 
       const userModel = new User();
-      const user = await userModel.findById(id);
-
-      if (!user) {
-        throw new NotFoundError('User not found');
-      }
-
-      const activities = await userModel.getUserActivities(id, {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        type,
-        dateRange: { from, to }
+      const data = await userModel.exportUsers({
+        format,
+        fields: fields?.split(','),
+        filters: JSON.parse(filters || '{}'),
+        dateRange: {
+          startDate,
+          endDate
+        }
       });
 
-      return ResponseHandler.success(res, { activities });
+      const timestamp = new Date().toISOString().split('T')[0];
+      const filename = `users-export-${timestamp}.${format}`;
+
+      res.setHeader('Content-Type', format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+
+      return res.send(data);
     } catch (error) {
-      return ResponseHandler.error(res, error.message);
+      next(new ErrorHandler.AppError(error.message, 500));
+    }
+  }
+
+  /**
+   * Log Admin Activity
+   * @private
+   */
+  static async logAdminActivity(adminId, action, req, details = {}) {
+    try {
+      await supabase
+        .from('admin_activity_logs')
+        .insert([{
+          id: uuidv4(),
+          admin_id: adminId,
+          action,
+          ip_address: req.ip,
+          user_agent: req.headers['user-agent'],
+          details,
+          created_at: new Date().toISOString()
+        }]);
+    } catch (error) {
+      console.error('Error logging admin activity:', error);
     }
   }
 }
