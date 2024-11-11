@@ -1,4 +1,3 @@
-// models/User.js
 const QueryBuilder = require('../utils/QueryBuilder');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -27,12 +26,77 @@ class User extends QueryBuilder {
   }
 
   /**
+   * Find user by email
+   * @param {string} email - User email
+   * @returns {Promise<Object>} User data
+   */
+  async findByEmail(email) {
+    try {
+      const { data, error } = await this.query
+        .select('*')
+        .eq('email', email)
+        .is('deleted_at', null)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return data;
+    } catch (error) {
+      throw new Error(`Error finding user by email: ${error.message}`);
+    }
+  }
+
+  /**
+   * Find user by reset token
+   * @param {string} token - Reset token
+   * @returns {Promise<Object>} User data
+   */
+  async findByResetToken(token) {
+    try {
+      const { data, error } = await this.query
+        .select('*')
+        .eq('reset_token', token)
+        .is('deleted_at', null)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return data;
+    } catch (error) {
+      throw new Error(`Error finding user by reset token: ${error.message}`);
+    }
+  }
+
+  /**
+   * Find user by refresh token
+   * @param {string} token - Refresh token
+   * @returns {Promise<Object>} User data
+   */
+  async findByRefreshToken(token) {
+    try {
+      const { data, error } = await this.query
+        .select('*')
+        .eq('refresh_token', token)
+        .is('deleted_at', null)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return data;
+    } catch (error) {
+      throw new Error(`Error finding user by refresh token: ${error.message}`);
+    }
+  }
+
+  /**
    * Create a new user
    * @param {Object} userData - User data to create
    * @returns {Promise<Object>} Created user
    */
   async create(userData) {
     try {
+      // Generate agent code if role is agent
+      if (userData.role === 'agent') {
+        userData.agent_code = await this.generateAgentCode();
+      }
+
       if (userData.password) {
         userData.password = await this.hashPassword(userData.password);
       }
@@ -54,29 +118,6 @@ class User extends QueryBuilder {
       return data;
     } catch (error) {
       throw new Error(`Error creating user: ${error.message}`);
-    }
-  }
-
-  /**
-   * Find user by ID
-   * @param {string} id - User ID
-   * @param {boolean} includeSoftDeleted - Include soft deleted records
-   * @returns {Promise<Object>} User data
-   */
-  async findById(id, includeSoftDeleted = false) {
-    try {
-      let query = this.query.select(this.selectableFields.join(','));
-      
-      if (!includeSoftDeleted) {
-        query = query.is('deleted_at', null);
-      }
-
-      const { data, error } = await query.eq('id', id).single();
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      throw new Error(`Error finding user: ${error.message}`);
     }
   }
 
@@ -168,7 +209,7 @@ class User extends QueryBuilder {
       const filePath = `identifications/${userId}/${fileName}`;
 
       // Upload file to Supabase Storage
-      const { data: uploadData, error: uploadError } = await this.supabase.storage
+      const { error: uploadError } = await this.supabase.storage
         .from('documents')
         .upload(filePath, fileData.buffer, {
           contentType: fileData.mimetype,
@@ -203,13 +244,13 @@ class User extends QueryBuilder {
         await this.supabase.storage
           .from('documents')
           .remove([filePath]);
-        throw new Error(`User update failed: ${updateError.message}`);
+        throw updateError;
       }
 
       // Create verification request record
       const { error: verificationError } = await this.supabase
         .from('verification_requests')
-        .insert([{
+        .insert({
           id: uuidv4(),
           user_id: userId,
           document_type: documentData.type,
@@ -219,7 +260,7 @@ class User extends QueryBuilder {
           status: 'pending',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
-        }]);
+        });
 
       if (verificationError) {
         throw new Error(`Verification request creation failed: ${verificationError.message}`);
@@ -246,7 +287,7 @@ class User extends QueryBuilder {
         .limit(1)
         .single();
 
-      if (error) throw error;
+      if (error && error.code !== 'PGRST116') throw error;
       return data;
     } catch (error) {
       throw new Error(`Error fetching verification status: ${error.message}`);
@@ -326,12 +367,22 @@ class User extends QueryBuilder {
     }
   }
 
-  // Utility methods
+  /**
+   * Hash password
+   * @param {string} password - Password to hash
+   * @returns {Promise<string>} Hashed password
+   */
   async hashPassword(password) {
     const salt = await bcrypt.genSalt(10);
     return await bcrypt.hash(password, salt);
   }
 
+  /**
+   * Compare password
+   * @param {string} providedPassword - Password to compare
+   * @param {string} storedPassword - Stored hashed password
+   * @returns {Promise<boolean>} True if passwords match
+   */
   async comparePassword(providedPassword, storedPassword) {
     return await bcrypt.compare(providedPassword, storedPassword);
   }
@@ -341,20 +392,24 @@ class User extends QueryBuilder {
    * @returns {Promise<string>} Generated agent code
    */
   async generateAgentCode() {
-    const prefix = 'AG';
-    const randomNum = Math.floor(10000 + Math.random() * 90000);
-    const agentCode = `${prefix}${randomNum}`;
+    try {
+      const prefix = 'UB';
+      const randomNum = Math.floor(10000 + Math.random() * 90000);
+      const agentCode = `${prefix}${randomNum}`;
 
-    const { data } = await this.query
-      .select('agent_code')
-      .eq('agent_code', agentCode)
-      .single();
+      const { data } = await this.query
+        .select('agent_code')
+        .eq('agent_code', agentCode)
+        .single();
 
-    if (data) {
-      return this.generateAgentCode();
+      if (data) {
+        return this.generateAgentCode();
+      }
+
+      return agentCode;
+    } catch (error) {
+      throw new Error(`Error generating agent code: ${error.message}`);
     }
-
-    return agentCode;
   }
 }
 

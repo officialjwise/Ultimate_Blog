@@ -1,7 +1,14 @@
-// utils/seeder.js
+const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const supabase = require('../config/database');
+const config = require('../config/env');
+// Initialize Supabase client
+const supabase = createClient(
+  config.SUPABASE_URL,
+  config.SUPABASE_SERVICE_ROLE_KEY
+);
+console.log(config.SUPABASE_URL);  // Check if the URL is being loaded
+console.log(config.SUPABASE_SERVICE_ROLE_KEY);  // Check if the service role key is being loaded
 
 class DatabaseSeeder {
   static async seedAdmin() {
@@ -10,16 +17,17 @@ class DatabaseSeeder {
         id: uuidv4(),
         name: 'Admin User',
         email: 'admin@ultimateblog.com',
-        phone: '+233123456789',
+        phone: '+233559847050',
         password: await bcrypt.hash('Admin@123', 10),
         role: 'admin',
         verified: true,
-        agent_code: 'AG00001',
+        agent_code: 'UB-00001',
         email_verified_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
+      // Make sure supabase.from is available here
       const { data, error } = await supabase
         .from('users')
         .insert([adminData])
@@ -36,7 +44,7 @@ class DatabaseSeeder {
     }
   }
 
-  static async seedTestUsers(count = 5) {
+  static async seedTestUsers(count = 2) {
     try {
       const users = Array.from({ length: count }, (_, i) => ({
         id: uuidv4(),
@@ -46,7 +54,7 @@ class DatabaseSeeder {
         password: bcrypt.hashSync('Test@123', 10),
         role: 'user',
         verified: i % 2 === 0, // Alternate between verified and unverified
-        agent_code: `AG${String(i + 1).padStart(5, '0')}`,
+        agent_code: `UB${String(i + 1).padStart(5, '0')}`,
         email_verified_at: i % 2 === 0 ? new Date().toISOString() : null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()

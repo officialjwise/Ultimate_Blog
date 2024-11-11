@@ -29,6 +29,7 @@ class ValidationMiddleware {
       return ResponseHandler.badRequest(res, 'Validation failed', extractedErrors);
     };
   }
+  
 
   /**
    * Registration validation rules
