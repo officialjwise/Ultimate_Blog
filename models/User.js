@@ -1,27 +1,27 @@
-const QueryBuilder = require('../utils/QueryBuilder');
-const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
+const QueryBuilder = require("../utils/QueryBuilder");
+const bcrypt = require("bcryptjs");
+const { v4: uuidv4 } = require("uuid");
 
 class User extends QueryBuilder {
   constructor() {
-    super('users');
-    this.searchableFields = ['name', 'email', 'phone', 'agent_code'];
+    super("users");
+    this.searchableFields = ["name", "email", "phone", "agent_code"];
     this.selectableFields = [
-      'id',
-      'name',
-      'email',
-      'phone',
-      'agent_code',
-      'role',
-      'verified',
-      'wallet_balance',
-      'identification_status',
-      'identification_type',
-      'identification_number',
-      'identification_url',
-      'identification_expiry',
-      'created_at',
-      'updated_at'
+      "id",
+      "name",
+      "email",
+      "phone",
+      "agent_code",
+      "role",
+      "verified",
+      "wallet_balance",
+      "identification_status",
+      "identification_type",
+      "identification_number",
+      "identification_url",
+      "identification_expiry",
+      "created_at",
+      "updated_at",
     ];
   }
 
@@ -33,12 +33,12 @@ class User extends QueryBuilder {
   async findByEmail(email) {
     try {
       const { data, error } = await this.query
-        .select('*')
-        .eq('email', email)
-        .is('deleted_at', null)
+        .select("*")
+        .eq("email", email)
+        .is("deleted_at", null)
         .single();
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error && error.code !== "PGRST116") throw error;
       return data;
     } catch (error) {
       throw new Error(`Error finding user by email: ${error.message}`);
@@ -53,12 +53,12 @@ class User extends QueryBuilder {
   async findByResetToken(token) {
     try {
       const { data, error } = await this.query
-        .select('*')
-        .eq('reset_token', token)
-        .is('deleted_at', null)
+        .select("*")
+        .eq("reset_token", token)
+        .is("deleted_at", null)
         .single();
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error && error.code !== "PGRST116") throw error;
       return data;
     } catch (error) {
       throw new Error(`Error finding user by reset token: ${error.message}`);
@@ -73,12 +73,12 @@ class User extends QueryBuilder {
   async findByRefreshToken(token) {
     try {
       const { data, error } = await this.query
-        .select('*')
-        .eq('refresh_token', token)
-        .is('deleted_at', null)
+        .select("*")
+        .eq("refresh_token", token)
+        .is("deleted_at", null)
         .single();
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error && error.code !== "PGRST116") throw error;
       return data;
     } catch (error) {
       throw new Error(`Error finding user by refresh token: ${error.message}`);
@@ -93,7 +93,7 @@ class User extends QueryBuilder {
   async create(userData) {
     try {
       // Generate agent code if role is agent
-      if (userData.role === 'agent') {
+      if (userData.role === "agent") {
         userData.agent_code = await this.generateAgentCode();
       }
 
@@ -106,10 +106,10 @@ class User extends QueryBuilder {
           id: uuidv4(),
           ...userData,
           wallet_balance: 0,
-          role: userData.role || 'user',
+          role: userData.role || "user",
           verified: false,
           created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
         .select()
         .single();
@@ -138,10 +138,10 @@ class User extends QueryBuilder {
       const { data, error } = await this.query
         .update({
           ...safeData,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', id)
-        .is('deleted_at', null)
+        .eq("id", id)
+        .is("deleted_at", null)
         .select()
         .single();
 
@@ -159,32 +159,32 @@ class User extends QueryBuilder {
    * @param {string} type - Transaction type ('add' or 'subtract')
    * @returns {Promise<Object>} Updated user
    */
-  async updateWallet(id, amount, type = 'add') {
+  async updateWallet(id, amount, type = "add") {
     try {
       const { data: user } = await this.query
-        .select('wallet_balance')
-        .eq('id', id)
-        .is('deleted_at', null)
+        .select("wallet_balance")
+        .eq("id", id)
+        .is("deleted_at", null)
         .single();
 
-      if (!user) throw new Error('User not found');
+      if (!user) throw new Error("User not found");
 
       let newBalance;
-      if (type === 'add') {
+      if (type === "add") {
         newBalance = parseFloat(user.wallet_balance) + parseFloat(amount);
-      } else if (type === 'subtract') {
+      } else if (type === "subtract") {
         newBalance = parseFloat(user.wallet_balance) - parseFloat(amount);
-        if (newBalance < 0) throw new Error('Insufficient wallet balance');
+        if (newBalance < 0) throw new Error("Insufficient wallet balance");
       } else {
-        throw new Error('Invalid transaction type');
+        throw new Error("Invalid transaction type");
       }
 
       const { data, error } = await this.query
-        .update({ 
+        .update({
           wallet_balance: newBalance,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', id)
+        .eq("id", id)
         .select()
         .single();
 
@@ -210,18 +210,19 @@ class User extends QueryBuilder {
 
       // Upload file to Supabase Storage
       const { error: uploadError } = await this.supabase.storage
-        .from('documents')
+        .from("documents")
         .upload(filePath, fileData.buffer, {
           contentType: fileData.mimetype,
-          upsert: false
+          upsert: false,
         });
 
-      if (uploadError) throw new Error(`File upload failed: ${uploadError.message}`);
+      if (uploadError)
+        throw new Error(`File upload failed: ${uploadError.message}`);
 
       // Get public URL
-      const { data: { publicUrl } } = this.supabase.storage
-        .from('documents')
-        .getPublicUrl(filePath);
+      const {
+        data: { publicUrl },
+      } = this.supabase.storage.from("documents").getPublicUrl(filePath);
 
       // Update user record with document information
       const { data: user, error: updateError } = await this.query
@@ -230,26 +231,24 @@ class User extends QueryBuilder {
           identification_number: documentData.number,
           identification_expiry: documentData.expiryDate,
           identification_url: publicUrl,
-          identification_status: 'pending',
+          identification_status: "pending",
           identification_submitted_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', userId)
-        .is('deleted_at', null)
+        .eq("id", userId)
+        .is("deleted_at", null)
         .select()
         .single();
 
       if (updateError) {
         // Rollback file upload if user update fails
-        await this.supabase.storage
-          .from('documents')
-          .remove([filePath]);
+        await this.supabase.storage.from("documents").remove([filePath]);
         throw updateError;
       }
 
       // Create verification request record
       const { error: verificationError } = await this.supabase
-        .from('verification_requests')
+        .from("verification_requests")
         .insert({
           id: uuidv4(),
           user_id: userId,
@@ -257,13 +256,15 @@ class User extends QueryBuilder {
           document_number: documentData.number,
           document_url: publicUrl,
           document_expiry: documentData.expiryDate,
-          status: 'pending',
+          status: "pending",
           created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         });
 
       if (verificationError) {
-        throw new Error(`Verification request creation failed: ${verificationError.message}`);
+        throw new Error(
+          `Verification request creation failed: ${verificationError.message}`
+        );
       }
 
       return user;
@@ -280,14 +281,14 @@ class User extends QueryBuilder {
   async getDocumentVerificationStatus(userId) {
     try {
       const { data, error } = await this.supabase
-        .from('verification_requests')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
+        .from("verification_requests")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
         .limit(1)
         .single();
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error && error.code !== "PGRST116") throw error;
       return data;
     } catch (error) {
       throw new Error(`Error fetching verification status: ${error.message}`);
@@ -305,10 +306,10 @@ class User extends QueryBuilder {
         .update({
           verified: true,
           email_verified_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', id)
-        .is('deleted_at', null)
+        .eq("id", id)
+        .is("deleted_at", null)
         .select()
         .single();
 
@@ -329,10 +330,10 @@ class User extends QueryBuilder {
       const { data, error } = await this.query
         .update({
           deleted_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', id)
-        .is('deleted_at', null)
+        .eq("id", id)
+        .is("deleted_at", null)
         .select()
         .single();
 
@@ -353,10 +354,10 @@ class User extends QueryBuilder {
       const { data, error } = await this.query
         .update({
           deleted_at: null,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', id)
-        .not('deleted_at', 'is', null)
+        .eq("id", id)
+        .not("deleted_at", "is", null)
         .select()
         .single();
 
@@ -393,16 +394,19 @@ class User extends QueryBuilder {
    */
   async generateAgentCode() {
     try {
-      const prefix = 'UB';
-      const randomNum = Math.floor(10000 + Math.random() * 90000);
+      const prefix = "UB-";
+      const randomNum = Math.floor(1000 + Math.random() * 9000);
       const agentCode = `${prefix}${randomNum}`;
 
-      const { data } = await this.query
-        .select('agent_code')
-        .eq('agent_code', agentCode)
+      // Check for uniqueness of the generated code
+      const { data, error } = await this.query
+        .from("users")
+        .select("agent_code")
+        .eq("agent_code", agentCode)
         .single();
 
       if (data) {
+        // If a duplicate is found, try again
         return this.generateAgentCode();
       }
 
