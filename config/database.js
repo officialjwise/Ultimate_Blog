@@ -1,6 +1,15 @@
 const { createClient } = require('@supabase/supabase-js');
 const config = require('./env');
 
+// Validate required configuration
+if (!config.SUPABASE_URL || !config.SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error(
+    'Missing required Supabase configuration. Please check your environment variables:\n' +
+    `SUPABASE_URL: ${config.SUPABASE_URL ? 'Present' : 'Missing'}\n` +
+    `SUPABASE_SERVICE_ROLE_KEY: ${config.SUPABASE_SERVICE_ROLE_KEY ? 'Present' : 'Missing'}`
+  );
+}
+
 const supabase = createClient(
   config.SUPABASE_URL,
   config.SUPABASE_SERVICE_ROLE_KEY,
@@ -13,16 +22,16 @@ const supabase = createClient(
   }
 );
 
+// Test the connection immediately
 const testConnection = async () => {
   try {
-    // Test basic connection
     const { data, error } = await supabase
       .from('users')
       .select('count')
       .limit(1);
 
     if (error) {
-      console.error('Database Error:', {
+      console.error('Database Connection Error:', {
         message: error.message,
         code: error.code,
         details: error.details
@@ -42,6 +51,7 @@ const testConnection = async () => {
   }
 };
 
+// Export both the client and the test function
 module.exports = {
   supabase,
   testConnection

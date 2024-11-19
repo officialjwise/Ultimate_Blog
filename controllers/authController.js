@@ -1,12 +1,11 @@
 // controllers/authController.js
-const User = require('../models/User');
-const ResponseHandler = require('../utils/responseHandlers');
-const EmailService = require('../utils/emailService');
-const SessionManager = require('../utils/sessionManager');
-const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
-const config = require('../config/env');
-
+const User = require("../models/User");
+const ResponseHandler = require("../utils/responseHandlers");
+const EmailService = require("../utils/emailService");
+const SessionManager = require("../utils/sessionManager");
+const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const config = require("../config/env");
 
 // Helper function to generate JWT token
 function generateToken(userId) {
@@ -17,7 +16,7 @@ function generateToken(userId) {
 
 // Helper function to generate a random refresh token
 function generateRefreshToken() {
-  return crypto.randomBytes(40).toString('hex');
+  return crypto.randomBytes(40).toString("hex");
 }
 
 // Helper function to generate a 6-digit verification code
@@ -35,7 +34,7 @@ async function register(req, res) {
 
     // Validate passwords match
     if (password !== password_confirmation) {
-      return ResponseHandler.badRequest(res, 'Passwords do not match');
+      return ResponseHandler.badRequest(res, "Passwords do not match");
     }
 
     const userModel = new User();
@@ -43,7 +42,7 @@ async function register(req, res) {
     // Check if email exists
     const existingUser = await userModel.findByEmail(email);
     if (existingUser) {
-      return ResponseHandler.badRequest(res, 'Email already registered');
+      return ResponseHandler.badRequest(res, "Email already registered");
     }
 
     // Generate verification code and expiry
@@ -67,10 +66,8 @@ async function register(req, res) {
     // Update user with refresh token
     await userModel.update(user.id, { refresh_token: refreshToken });
 
-    // Send verification email
-    await EmailService.sendVerificationEmail(user.email, user.name, verificationCode);
-
-    return ResponseHandler.created(res, {
+    // Prepare base response
+    const response = {
       user: {
         id: user.id,
         name: user.name,
@@ -80,13 +77,37 @@ async function register(req, res) {
       },
       token,
       refresh_token: refreshToken,
-      message: 'Registration successful. Please verify your email.',
-    });
+    };
+
+    try {
+      // Try to send verification email
+      await EmailService.sendVerificationEmail(
+        user.email,
+        user.name,
+        verificationCode
+      );
+
+      response.message =
+        "Registration successful. Please check your email for verification.";
+
+      if (process.env.NODE_ENV === "development") {
+        response.verification_code = verificationCode;
+      }
+    } catch (emailError) {
+      console.error("Email sending failed:", emailError);
+      response.message =
+        "Registration successful but verification email could not be sent. Please contact support.";
+      if (process.env.NODE_ENV === "development") {
+        response.verification_code = verificationCode;
+      }
+    }
+
+    return ResponseHandler.created(res, response);
   } catch (error) {
+    console.error("Registration error:", error);
     return ResponseHandler.error(res, error.message);
   }
 }
-
 /**
  * Login user
  * @route POST /api/auth/login
@@ -99,18 +120,24 @@ async function login(req, res) {
     const user = await userModel.findByEmail(email);
 
     if (!user) {
-      return ResponseHandler.unauthorized(res, 'Invalid credentials');
+      return ResponseHandler.unauthorized(res, "Invalid credentials");
     }
 
     // Verify password
-    const isPasswordValid = await userModel.comparePassword(password, user.password);
+    const isPasswordValid = await userModel.comparePassword(
+      password,
+      user.password
+    );
     if (!isPasswordValid) {
-      return ResponseHandler.unauthorized(res, 'Invalid credentials');
+      return ResponseHandler.unauthorized(res, "Invalid credentials");
     }
 
     // Check if email is verified
     if (!user.verified) {
-      return ResponseHandler.forbidden(res, 'Please verify your email before logging in');
+      return ResponseHandler.forbidden(
+        res,
+        "Please verify your email before logging in"
+      );
     }
 
     // Generate tokens
@@ -145,40 +172,34 @@ async function verifyEmail(req, res) {
     const { email, code } = req.body;
     const userModel = new User();
 
+    // First find the user and log the result
     const user = await userModel.findByEmail(email);
-    if (!user) {
-      return ResponseHandler.notFound(res, 'User not found');
+    console.log("Found user:", user);
+
+    if (!user) return ResponseHandler.notFound(res, "User not found");
+    if (user.verified)
+      return ResponseHandler.badRequest(res, "Email already verified");
+    if (user.verification_code !== code)
+      return ResponseHandler.badRequest(res, "Invalid verification code");
+
+    console.log("About to verify email for user ID:", user.id);
+    const updatedUser = await userModel.verifyEmail(user.id);
+
+    if (!updatedUser) {
+      console.log("No updated user returned");
+      return ResponseHandler.error(res, "Failed to verify email");
     }
 
-    if (user.verified) {
-      return ResponseHandler.badRequest(res, 'Email already verified');
-    }
-
-    if (!user.verification_code || user.verification_code !== code) {
-      return ResponseHandler.badRequest(res, 'Invalid verification code');
-    }
-
-    if (new Date() > new Date(user.verification_code_expires)) {
-      return ResponseHandler.badRequest(res, 'Verification code has expired');
-    }
-
-    // Update user verification status
-    await userModel.update(user.id, {
-      verified: true,
-      verification_code: null,
-      verification_code_expires: null,
-      email_verified_at: new Date().toISOString(),
-    });
-
-    // Send welcome email
     await EmailService.sendWelcomeEmail(user.email, user.name);
-
-    return ResponseHandler.success(res, null, 'Email verified successfully');
+    return ResponseHandler.success(res, {
+      message: "Email verified successfully",
+      user: updatedUser,
+    });
   } catch (error) {
+    console.error("Verification error:", error);
     return ResponseHandler.error(res, error.message);
   }
 }
-
 /**
  * Resend verification code
  * @route POST /api/auth/verify/resend
@@ -190,11 +211,11 @@ async function resendVerification(req, res) {
 
     const user = await userModel.findByEmail(email);
     if (!user) {
-      return ResponseHandler.notFound(res, 'User not found');
+      return ResponseHandler.notFound(res, "User not found");
     }
 
     if (user.verified) {
-      return ResponseHandler.badRequest(res, 'Email already verified');
+      return ResponseHandler.badRequest(res, "Email already verified");
     }
 
     // Generate new verification code
@@ -207,9 +228,17 @@ async function resendVerification(req, res) {
     });
 
     // Send new verification email
-    await EmailService.sendVerificationEmail(user.email, user.name, verificationCode);
+    await EmailService.sendVerificationEmail(
+      user.email,
+      user.name,
+      verificationCode
+    );
 
-    return ResponseHandler.success(res, null, 'Verification code sent successfully');
+    return ResponseHandler.success(
+      res,
+      null,
+      "Verification code sent successfully"
+    );
   } catch (error) {
     return ResponseHandler.error(res, error.message);
   }
@@ -226,7 +255,7 @@ async function forgotPassword(req, res) {
 
     const user = await userModel.findByEmail(email);
     if (!user) {
-      return ResponseHandler.notFound(res, 'User not found');
+      return ResponseHandler.notFound(res, "User not found");
     }
 
     const resetToken = generateRefreshToken();
@@ -235,7 +264,11 @@ async function forgotPassword(req, res) {
     // Send password reset email
     await EmailService.sendPasswordResetEmail(user.email, resetToken);
 
-    return ResponseHandler.success(res, null, 'Password reset link sent successfully');
+    return ResponseHandler.success(
+      res,
+      null,
+      "Password reset link sent successfully"
+    );
   } catch (error) {
     return ResponseHandler.error(res, error.message);
   }
@@ -250,13 +283,13 @@ async function resetPassword(req, res) {
     const { token, newPassword, confirmPassword } = req.body;
 
     if (newPassword !== confirmPassword) {
-      return ResponseHandler.badRequest(res, 'Passwords do not match');
+      return ResponseHandler.badRequest(res, "Passwords do not match");
     }
 
     const userModel = new User();
     const user = await userModel.findByResetToken(token);
     if (!user) {
-      return ResponseHandler.notFound(res, 'User not found');
+      return ResponseHandler.notFound(res, "User not found");
     }
 
     // Update password
@@ -265,11 +298,15 @@ async function resetPassword(req, res) {
       reset_token: null, // Remove reset token after use
     });
 
-    return ResponseHandler.success(res, {
-      id: updatedUser.id,
-      email: updatedUser.email,
-      name: updatedUser.name,
-    }, 'Password reset successfully');
+    return ResponseHandler.success(
+      res,
+      {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        name: updatedUser.name,
+      },
+      "Password reset successfully"
+    );
   } catch (error) {
     return ResponseHandler.error(res, error.message);
   }
@@ -287,7 +324,7 @@ async function refreshToken(req, res) {
     // Validate refresh token
     const user = await userModel.findByRefreshToken(refresh_token);
     if (!user) {
-      return ResponseHandler.unauthorized(res, 'Invalid refresh token');
+      return ResponseHandler.unauthorized(res, "Invalid refresh token");
     }
 
     // Generate new JWT token
@@ -309,13 +346,13 @@ async function logout(req, res) {
 
     const user = await userModel.findByRefreshToken(refresh_token);
     if (!user) {
-      return ResponseHandler.unauthorized(res, 'Invalid refresh token');
+      return ResponseHandler.unauthorized(res, "Invalid refresh token");
     }
 
     // Invalidate refresh token
     await userModel.update(user.id, { refresh_token: null });
 
-    return ResponseHandler.success(res, null, 'Logged out successfully');
+    return ResponseHandler.success(res, null, "Logged out successfully");
   } catch (error) {
     return ResponseHandler.error(res, error.message);
   }

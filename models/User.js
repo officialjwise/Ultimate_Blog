@@ -1,6 +1,7 @@
 const QueryBuilder = require("../utils/QueryBuilder");
 const bcrypt = require("bcryptjs");
 const { v4: uuidv4 } = require("uuid");
+const { createClient } = require("@supabase/supabase-js");
 
 class User extends QueryBuilder {
   constructor() {
@@ -127,6 +128,7 @@ class User extends QueryBuilder {
    * @param {Object} updateData - Data to update
    * @returns {Promise<Object>} Updated user
    */
+
   async update(id, updateData) {
     try {
       const { password, role, wallet_balance, ...safeData } = updateData;
@@ -135,19 +137,48 @@ class User extends QueryBuilder {
         safeData.password = await this.hashPassword(password);
       }
 
+      // Fetch user data to check if the user exists
+      const { data: existingUsers, error: fetchError } = await this.query
+        .select()
+        .eq("id", id);
+
+      // Check for errors in fetching data
+      if (fetchError) {
+        throw new Error(`Error fetching user: ${fetchError.message}`);
+      }
+
+      // Handle cases where no rows or multiple rows are found
+      if (!existingUsers || existingUsers.length === 0) {
+        throw new Error("User not found in the database");
+      }
+      if (existingUsers.length > 1) {
+        throw new Error(
+          "Multiple users found with the same ID. Please verify your database."
+        );
+      }
+
+      console.log("User record found before update:", existingUsers[0]); // Logging the found user data
+
+      // Perform the update
       const { data, error } = await this.query
         .update({
           ...safeData,
           updated_at: new Date().toISOString(),
         })
         .eq("id", id)
-        .is("deleted_at", null)
         .select()
-        .single();
+        .single(); // Reapply `.single()` now that we are sure only one record matches
 
-      if (error) throw error;
-      return data;
+      if (error) throw error; // Throw any errors from the update operation
+
+      return data; // Return the updated data if successful
     } catch (error) {
+      console.error("Error in update method:", error.message); // Log any errors that occur
+      if (error.message.includes("multiple (or no) rows returned")) {
+        throw new Error(
+          "Multiple or no rows matched the update criteria. Please verify your conditions."
+        );
+      }
       throw new Error(`Error updating user: ${error.message}`);
     }
   }
@@ -174,7 +205,8 @@ class User extends QueryBuilder {
         newBalance = parseFloat(user.wallet_balance) + parseFloat(amount);
       } else if (type === "subtract") {
         newBalance = parseFloat(user.wallet_balance) - parseFloat(amount);
-        if (newBalance < 0) throw new Error("Insufficient wallet balance");
+        if (newBalance < 0 && newBalance == null)
+          throw new Error("Insufficient wallet balance, + ");
       } else {
         throw new Error("Invalid transaction type");
       }
@@ -300,26 +332,43 @@ class User extends QueryBuilder {
    * @param {string} id - User ID
    * @returns {Promise<Object>} Updated user
    */
+  // model/User.js
   async verifyEmail(id) {
     try {
+      console.log("Verifying email for ID:", id);
+      const agentCode = await this.generateAgentCode();
+
+      // Modified select query
+      const { data: existingUser, error: fetchError } = await this.query
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+
+      console.log("Fetch result:", { existingUser, fetchError });
+
+      if (!existingUser) {
+        throw new Error("User not found");
+      }
+
       const { data, error } = await this.query
         .update({
           verified: true,
+          verification_code: null,
+          verification_code_expires: null,
           email_verified_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          agent_code: agentCode,
         })
         .eq("id", id)
-        .is("deleted_at", null)
-        .select()
-        .single();
+        .select();
+
+      console.log("Update result:", { data, error });
 
       if (error) throw error;
-      return data;
+      return data[0];
     } catch (error) {
       throw new Error(`Error verifying email: ${error.message}`);
     }
   }
-
   /**
    * Soft delete user
    * @param {string} id - User ID
@@ -394,19 +443,16 @@ class User extends QueryBuilder {
    */
   async generateAgentCode() {
     try {
-      const prefix = "UB-";
-      const randomNum = Math.floor(1000 + Math.random() * 9000);
+      const prefix = "UB";
+      const randomNum = Math.floor(10000 + Math.random() * 90000);
       const agentCode = `${prefix}${randomNum}`;
 
-      // Check for uniqueness of the generated code
-      const { data, error } = await this.query
-        .from("users")
+      const { data } = await this.query
         .select("agent_code")
         .eq("agent_code", agentCode)
         .single();
 
       if (data) {
-        // If a duplicate is found, try again
         return this.generateAgentCode();
       }
 
